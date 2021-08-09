@@ -1,0 +1,111 @@
+
+###Below Parameter needs to be defined #####################
+
+export ORACLE_SID=LR12QA2
+export ORACLE_HOME=/u01/app/oracle/product/12.1.0.2/dbhome_3
+export PATH=$ORACLE_HOME/bin:$PATH
+current=$(date +%d-%m-%Y)
+DATA_LOC=+DATA/LR12QA2
+BKP_LOC=/ora_backup/rman/DB_compressed
+LOG_LOC=~/Clone/${current}/${ORACLE_SID} #change accordingly
+mkdir -p ${LOG_LOC}
+#or
+# . par.env
+############################################################
+
+#Start DB Restore
+
+Create_Start_Spfile()
+{
+echo -e "Creating spfile from pfile \n" > ${LOG_LOC}/Create_Start_Spfile.log
+sqlplus / as sysdba <<EOF >> ${LOG_LOC}/Create_Start_Spfile.log
+create spfile='${DATA_LOC}/spfile${ORACLE_SID}.ora' from 
+pfile='${ORACLE_HOME}/dbs/GOLD_StandAlone_init${ORACLE_SID}.ora';
+exit;
+EOF
+
+if [ `grep "ORA-" ${LOG_LOC}/Create_Start_Spfile.log | wc -l ` -gt 0 ] ; then
+  echo -e "Below is the error while creating spfile. \n" >> ${LOG_LOC}/Create_Start_Spfile.log
+  grep "ORA-" ${LOG_LOC}/Create_Start_Spfile.log >> ${LOG_LOC}/Create_Start_Spfile.log
+  exit
+else
+  echo "spflie created successfully." >> ${LOG_LOC}/Create_Start_Spfile.log
+fi
+
+
+echo -e "Starting Database in nomount with spfile\n" >>  ${LOG_LOC}/Create_Start_Spfile.log
+sqlplus / as sysdba <<EOF >> ${LOG_LOC}/Create_Start_Spfile.log
+startup nomount spfile='${DATA_LOC}/spfile${ORACLE_SID}.ora'
+sho parameter spfile;
+EOF
+
+if [ `grep "ORA-" ${LOG_LOC}/Create_Start_Spfile.log | wc -l ` -gt 0 ] ; then
+  echo -e "Below is the error while starting database in nomount with spfile \n" >> ${LOG_LOC}/Create_Start_Spfile.log
+  grep "ORA-" ${LOG_LOC}/Create_Start_Spfile.log >> ${LOG_LOC}/Create_Start_Spfile.log
+  exit
+else
+  echo -e "Started database sucessfully in nomount with spfile.\n" >> ${LOG_LOC}/Create_Start_Spfile.log
+fi
+} 
+
+
+Restore_DB()
+{
+echo -e "Starting Rman Duplicate \n" > ${LOG_LOC}/Restore_DB.log
+rman auxiliary / log=${LOG_LOC}/${ORACLE_SID}_rman_${current}.log <<EOF
+run
+{
+allocate auxiliary channel c1 type disk;
+allocate auxiliary channel c2 type disk;
+allocate auxiliary channel c3 type disk;
+allocate auxiliary channel c4 type disk;
+allocate auxiliary channel c5 type disk;
+allocate auxiliary channel c6 type disk;
+allocate auxiliary channel c7 type disk;
+allocate auxiliary channel c8 type disk;
+allocate auxiliary channel c9 type disk;
+allocate auxiliary channel c10 type disk;
+allocate auxiliary channel c11 type disk;
+allocate auxiliary channel c12 type disk;
+DUPLICATE DATABASE TO ${ORACLE_SID} BACKUP LOCATION '${BKP_LOC}';
+}
+EOF
+
+
+if [ `grep "RMAN-" ${LOG_LOC}/${ORACLE_SID}_rman_${current}.log | wc -l ` -gt 0 ] ; then
+  echo "There are errors in the restore . Please check the logfile ${LOG_LOC}/${ORACLE_SID}_rman_${current}.log. Exiting" >> ${LOG_LOC}/Restore_DB.log
+  exit
+else
+   echo -e "Restore Completed Successfully" >> ${LOG_LOC}/Restore_DB.log
+fi
+}
+
+Convert_DB_RAC()
+{
+echo -e "Convert database to RAC... Bringing down the database \n" > ${LOG_LOC}/Convert_DB_RAC.log
+
+sqlplus / as sysdba <<EOF >> ${LOG_LOC}/Convert_DB_RAC.log
+shut immediate;
+exit;
+EOF
+
+export ORACLE_SID=${ORACLE_SID}1
+
+sqlplus / as sysdba <<EOF >> ${LOG_LOC}/Convert_DB_RAC.log
+create spfile='${DATA_LOC}/spfile${ORACLE_SID}.ora' from 
+pfile= '${ORACLE_HOME}/dbs/GOLD_RAC_init${ORACLE_SID}.ora';
+exit;
+EOF
+
+echo -e "Starting RAC database \n" >> ${LOG_LOC}/Convert_DB_RAC.log
+srvctl start database -d $ORACLE_SID >> ${LOG_LOC}/Convert_DB_RAC.log
+srvctl status database -d $ORACLE_SID >> ${LOG_LOC}/Convert_DB_RAC.log
+
+if [ `grep "running" ${LOG_LOC}/Convert_DB_RAC.log| wc -l ` -eq 2 ] ; then
+  echo -e "Database $ORACLE_SID is running on two nodes \n" >> ${LOG_LOC}/Convert_DB_RAC.log
+else
+   echo -e "Database $ORACLE_SID is not running on two nodes... please check \n" >> ${LOG_LOC}/Convert_DB_RAC.log
+exit 
+fi
+}
+
